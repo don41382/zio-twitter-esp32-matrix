@@ -1,0 +1,20 @@
+<configuration scan="true" debug="false">
+
+    <appender name="console" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <pattern>%date{HH:mm:ss} %-5level %logger{0} - %msg%n</pattern>
+        </encoder>
+        <filter class="ch.qos.logback.classic.filter.LevelFilter">
+            <level>INFO</level>
+            <onMatch>ACCEPT</onMatch>
+            <onMismatch>DENY</onMismatch>
+        </filter>
+    </appender>
+
+    <logger name="com.danielasfregola.twitter4s" level="WARN" />
+
+    <root level="info">
+        <appender-ref ref="console"/>
+    </root>
+
+</configuration>
