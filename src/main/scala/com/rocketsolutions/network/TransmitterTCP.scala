@@ -1,29 +1,46 @@
 package com.rocketsolutions.network
 
 import java.awt.image.BufferedImage
+import java.io.IOException
 import java.net.{InetSocketAddress, SocketException}
 import java.nio.ByteBuffer
 import java.nio.channels.SocketChannel
 
+import akka.stream.ConnectionException
+import com.rocketsolutions.TwitterDisplay.TwitterEnv
 import com.rocketsolutions.model.Dimension
 import zio._
-import zio.duration._
 import zio.blocking.Blocking
-import zio.clock.Clock
+import zio.duration._
 
 sealed trait ReceiveCommands
 case object ButtonPressed extends ReceiveCommands
 
 case class InvalidCmdPressed(invalidCmd: Byte) extends Exception
 
+sealed trait SendError {
+  val errorMsg: String
+}
+
+case class Timeout(errorMsg: String = "timeout") extends SendError
+case class BrokenPipe(errorMsg: String) extends SendError
+case class ConnectionError(errorMsg: String) extends SendError
+case class SocketError(errorMsg: String) extends SendError
+
 
 object TransmitterTCP {
 
-  def connect(address: InetSocketAddress) = blocking.effectBlocking {
+  def connect(address: InetSocketAddress): ZIO[TwitterEnv, SendError, SocketChannel] = blocking.effectBlocking {
     val s = SocketChannel.open()
-    s.connect(address)
+    s.socket().setSoTimeout(1000)
     s.socket().setTcpNoDelay(true)
+    s.connect(address)
     s
+  }.timeoutFail(new SocketException(s"timeout - no connection to $address"))(2 seconds).refineOrDie {
+    case e: ConnectionException =>
+      ConnectionError(e.getMessage)
+    case e: SocketException =>
+      SocketError(e.getMessage)
   }
 
   def receiveRemoteCmd(queue: Queue[ReceiveCommands], socket: SocketChannel): ZIO[Blocking, Throwable, Unit] = for {
@@ -40,13 +57,15 @@ object TransmitterTCP {
   } yield (Unit)
 
   def sendFrame(id: Int, dim: Dimension, i: BufferedImage)
-    (implicit socket: SocketChannel): ZIO[Blocking, Throwable, Unit] =
-    blocking.effectBlocking {
+    (implicit socket: SocketChannel): ZIO[TwitterEnv, SendError, Unit] = blocking.effectBlocking {
       val buffer = ByteBuffer.wrap(TransmitterTCP.frameToBinary(id, dim, i))
       while (buffer.hasRemaining) {
         socket.write(buffer)
       }
-  }
+    }.refineOrDie {
+    case e: java.io.IOException =>
+      BrokenPipe(e.getMessage)
+    }.timeoutFail(Timeout("send frame was longer than 2 seconds"))(2 seconds)
 
   def frameToBinary(id: Int, dim: Dimension, i: BufferedImage): Array[Byte] = {
     val header = Seq(

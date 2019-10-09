@@ -11,7 +11,7 @@ resolvers ++= Seq(
 )
 
 
-val ZIOVersion = "1.0.0-RC11-1"
+val ZIOVersion = "1.0.0-RC14"
 val GIFVersion = "4.9.0"
 val twitterVersion = "6.1"
 val logbackVersion = "1.1.9"
@@ -26,3 +26,8 @@ libraryDependencies ++= Seq(
 )
 
 mainClass in (Compile, run) := Some("com.rocketsolutions.TwitterDisplay")
+
+scalacOptions ++= Seq(
+  "-Xfatal-warnings",
+  "-language:postfixOps"
+)

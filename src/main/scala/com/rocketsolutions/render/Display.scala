@@ -3,11 +3,13 @@ import java.awt.image.BufferedImage
 import java.net.InetSocketAddress
 import java.nio.channels.SocketChannel
 
+import com.rocketsolutions.TwitterDisplay.TwitterEnv
 import com.rocketsolutions.model._
-import com.rocketsolutions.network.TransmitterTCP
-import zio.blocking.Blocking
+import com.rocketsolutions.network._
 import zio._
+import zio.console._
 import zio.duration._
+
 
 object Display {
 
@@ -21,7 +23,7 @@ object Display {
       TwoHeader("TWEET","NOW", Timed(2 seconds))
     ),
     bg = Seq(
-      GifPlay("/gifs/explode.gif", Fit)
+      GifPlay("/gifs/pig.gif", Fit)
     )
   )
 
@@ -39,24 +41,32 @@ object Display {
     )
   }
 
-  def send(frames: Seq[BufferedImage])(implicit socket: SocketChannel): ZIO[Blocking, Throwable, Unit] =
+
+  def send(frames: Seq[BufferedImage])(implicit socket: SocketChannel)=
     ZIO.foreach(frames.zipWithIndex) { case (f, id) =>
       TransmitterTCP.sendFrame(id, dim, f)
     }.unit
 
-
-  def displayTweet(addr: InetSocketAddress, q: Queue[IncomingTweet])=
-    TransmitterTCP.connect(addr).bracket(s => ZIO.effectTotal(s.close()))(implicit s => for {
-        rw <- RendererSupport.renderFullScene(waitingTweets)
-        _ <- q.poll.flatMap {
+  def displayTweet(address: InetSocketAddress, q: Queue[IncomingTweet]):
+    ZIO[TwitterEnv, SendError, Unit] =
+    TransmitterTCP.connect(address).bracket[TwitterEnv,SendError](s => putStrLn("closing socket") *> ZIO.effectTotal(s.close()))(implicit s => for {
+        _      <- putStrLn("display active")
+        wscene <- RendererSupport.renderFullScene(waitingTweets)
+        _      <- q.poll.flatMap {
           case Some(t) =>
-            ZIO.effectTotal(println(s"${t.username}: ${t.tweet}")) *>
+            putStrLn(s"${t.username}: ${t.tweet}") *>
               RendererSupport.renderFullScene(showName(t)) >>= send
           case None =>
-            send(rw)
-        } forever
-      } yield ()
-    )
-
+            putStrLn("no new tweets for @RiskIdent ...") *>
+              send(wscene)
+        }.forever
+      } yield ())
+      .tapError(e => putStrLn(e.errorMsg))
+      .retry(Schedule.doWhile((e: SendError) => e match {
+        case ConnectionError(_) => true
+        case BrokenPipe(_) => true
+        case SocketError(_) => true
+        case Timeout(_) => true
+      }) *> Schedule.linear(2 seconds) && Schedule.recurs(5))
 
 }
